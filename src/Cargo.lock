@@ -1155,6 +1155,7 @@ dependencies = [
  "slint",
  "slint-build",
  "toml",
+ "ureq",
  "wayland-backend",
  "wayland-client",
  "wgpu",

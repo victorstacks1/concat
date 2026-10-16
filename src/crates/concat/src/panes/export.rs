@@ -15,7 +15,10 @@
 
 use concat_host::export::{self, ExportSpec};
 use concat_media::ColorRange;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
+use crate::content_desk::{self, ContentDeskCard, QueueMode, QueuedPublication};
 use crate::format::{bytes, eta};
 use crate::host::{on_ui, spawn};
 use crate::i18n::{self, t, tf};
@@ -52,6 +55,15 @@ pub enum ExportMsg {
     BitrateChanged(String),
     /// Back to the form after a finished or failed render.
     Again,
+    /// Load the key owner's eligible Reels, or open Settings if not configured.
+    ContentDeskOpen,
+    /// The Content Desk card list answered.
+    ContentDeskCardsLoaded(Result<Vec<ContentDeskCard>, String>),
+    ContentDeskCardChanged(i32),
+    ContentDeskModeChanged(i32),
+    ContentDeskQueue,
+    ContentDeskProgress { fraction: f32 },
+    ContentDeskFinished(Result<QueuedPublication, String>),
     /// Pick the destination folder.
     Browse,
     /// The folder the picker answered with.
@@ -104,10 +116,37 @@ pub struct ExportPane {
     pub progress: f32,
     pub stage: String,
     pub message: String,
+    /// Whether the Content Desk chooser is visible.
+    pub content_desk_open: bool,
+    /// Whether the card request is running.
+    pub content_desk_loading: bool,
+    /// Cards returned for the configured API key's owner.
+    pub content_desk_cards: Vec<ContentDeskCard>,
+    /// The selected card index, retained alongside its ID.
+    pub content_desk_card: Option<usize>,
+    /// Queueing mode selected in the chooser.
+    pub content_desk_mode: QueueMode,
+    /// Upload progress or completion wording shown in the dialog.
+    pub content_desk_result: String,
+    content_desk_target: Option<ContentDeskTarget>,
     /// Where the finished file is, for Reveal.
     pub written: String,
     /// When the render started, for a real ETA.
     started_at: Option<std::time::Instant>,
+}
+
+#[derive(Clone)]
+struct ContentDeskTarget {
+    base_url: String,
+    api_key: String,
+    production_id: String,
+    mode: QueueMode,
+    cancelled: Arc<AtomicBool>,
+}
+
+enum WorkerResult {
+    Export(Result<String, String>),
+    ContentDesk(Result<QueuedPublication, String>),
 }
 
 impl Default for ExportPane {
@@ -130,6 +169,13 @@ impl Default for ExportPane {
             progress: 0.0,
             stage: String::new(),
             message: String::new(),
+            content_desk_open: false,
+            content_desk_loading: false,
+            content_desk_cards: Vec::new(),
+            content_desk_card: None,
+            content_desk_mode: QueueMode::Now,
+            content_desk_result: String::new(),
+            content_desk_target: None,
             written: String::new(),
             started_at: None,
         }
@@ -190,7 +236,23 @@ impl ExportPane {
             ExportMsg::Again => {
                 self.phase = ExportPhase::Idle;
                 self.progress = 0.0;
+                self.content_desk_open = false;
+                self.content_desk_target = None;
+                self.content_desk_result.clear();
+                self.message.clear();
             }
+            ExportMsg::ContentDeskOpen => self.open_content_desk(studio),
+            ExportMsg::ContentDeskCardsLoaded(result) => self.content_desk_cards_loaded(result),
+            ExportMsg::ContentDeskCardChanged(index) => self.content_desk_card_changed(index),
+            ExportMsg::ContentDeskModeChanged(index) => self.content_desk_mode_changed(index),
+            ExportMsg::ContentDeskQueue => self.queue_content_desk(studio),
+            ExportMsg::ContentDeskProgress { fraction } => {
+                if self.phase == ExportPhase::Running {
+                    self.progress = fraction.clamp(0.9, 1.0);
+                    self.stage = t("export.contentDeskUploading");
+                }
+            }
+            ExportMsg::ContentDeskFinished(result) => self.content_desk_finished(result),
             // The picker runs with the studio unborrowed and answers as a
             // message of its own; see `host::after_dialog`.
             ExportMsg::Browse => {
@@ -216,9 +278,13 @@ impl ExportPane {
             ExportMsg::Start => self.start(studio),
             ExportMsg::Overwrite => self.begin(studio, true),
             ExportMsg::Cancel => {
+                if let Some(target) = &self.content_desk_target {
+                    target.cancelled.store(true, Ordering::Release);
+                }
                 studio.host.exporter.cancel();
                 self.phase = ExportPhase::Idle;
                 self.progress = 0.0;
+                self.content_desk_target = None;
             }
             ExportMsg::Progress { fraction, stage } => {
                 if self.phase == ExportPhase::Running {
@@ -257,6 +323,104 @@ impl ExportPane {
                 self.phase = ExportPhase::Failed;
                 self.message = error.clone();
                 studio.notify(&tf("export.exportFailed", &[&error]), true);
+            }
+        }
+    }
+
+    fn open_content_desk(&mut self, studio: &mut Studio) {
+        let Some(api_key) = studio.prefs.content_desk_api_key.as_deref().filter(|key| !key.trim().is_empty()) else {
+            studio.settings.tab = 4;
+            studio.settings.open = true;
+            self.open = false;
+            return;
+        };
+        self.content_desk_open = true;
+        self.content_desk_loading = true;
+        self.content_desk_cards.clear();
+        self.content_desk_card = None;
+        self.content_desk_result.clear();
+        self.message.clear();
+        let base_url = studio.prefs.content_desk_url().to_owned();
+        let api_key = api_key.to_owned();
+        spawn(
+            move || content_desk::list_cards(&base_url, &api_key).map_err(|error| error.to_string()),
+            |studio, _, _, result| studio.handle(Msg::Export(ExportMsg::ContentDeskCardsLoaded(result))),
+        );
+    }
+
+    fn content_desk_cards_loaded(&mut self, result: Result<Vec<ContentDeskCard>, String>) {
+        self.content_desk_loading = false;
+        match result {
+            Ok(cards) => {
+                self.content_desk_cards = cards;
+                self.content_desk_card = None;
+                self.message.clear();
+            }
+            Err(error) => {
+                self.content_desk_cards.clear();
+                self.content_desk_card = None;
+                self.message = error;
+            }
+        }
+    }
+
+    fn content_desk_card_changed(&mut self, index: i32) {
+        self.content_desk_card = (index >= 0)
+            .then_some(index as usize)
+            .filter(|index| *index < self.content_desk_cards.len());
+    }
+
+    fn content_desk_mode_changed(&mut self, index: i32) {
+        self.content_desk_mode = if index == 1 { QueueMode::Strategy } else { QueueMode::Now };
+    }
+
+    fn content_desk_can_queue(&self) -> bool {
+        self.content_desk_card.is_some_and(|index| index < self.content_desk_cards.len())
+            && !self.content_desk_loading
+            && self.phase != ExportPhase::Running
+    }
+
+    fn queue_content_desk(&mut self, studio: &mut Studio) {
+        if !self.content_desk_can_queue() {
+            return;
+        }
+        let Some(api_key) = studio.prefs.content_desk_api_key.as_deref().filter(|key| !key.trim().is_empty()) else {
+            studio.settings.tab = 4;
+            studio.settings.open = true;
+            self.open = false;
+            return;
+        };
+        let Some(index) = self.content_desk_card else { return };
+        self.content_desk_target = Some(ContentDeskTarget {
+            base_url: studio.prefs.content_desk_url().to_owned(),
+            api_key: api_key.to_owned(),
+            production_id: self.content_desk_cards[index].id.clone(),
+            mode: self.content_desk_mode,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        });
+        self.begin(studio, false);
+    }
+
+    fn content_desk_finished(&mut self, result: Result<QueuedPublication, String>) {
+        self.content_desk_target = None;
+        match result {
+            Ok(queued) => {
+                self.phase = ExportPhase::Queued;
+                self.progress = 1.0;
+                let mode = if queued.mode == "strategy" {
+                    t("export.contentDeskStrategy")
+                } else {
+                    t("export.contentDeskNow")
+                };
+                self.content_desk_result = tf(
+                    "export.contentDeskQueued",
+                    &[&queued.title, &mode, &queued.data_postar],
+                );
+            }
+            Err(error) => {
+                if self.phase == ExportPhase::Idle { return; }
+                self.phase = ExportPhase::Failed;
+                self.message = error;
             }
         }
     }
@@ -444,12 +608,24 @@ impl ExportPane {
             self.message = t("export.nameNeedsToBeAFileName");
             return;
         };
-        let output = format!("{}/{name}.mp4", self.folder.trim_end_matches('/'));
+        let content_desk_target = self.content_desk_target.clone();
+        let output = if content_desk_target.is_some() {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            std::env::temp_dir()
+                .join(format!("concat-content-desk-{stamp}.mp4"))
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            format!("{}/{name}.mp4", self.folder.trim_end_matches('/'))
+        };
         // A file already there is replaced once the person has said so:
         // the confirmation sheet asks, and its answer comes back as
         // `Overwrite`. Nothing is written until then; the engine renders
         // beside the file and renames over it at the end.
-        if !overwrite && std::path::Path::new(&output).exists() {
+        if content_desk_target.is_none() && !overwrite && std::path::Path::new(&output).exists() {
             studio.confirm = Some(crate::studio::Confirm::ReplaceExport { path: output });
             return;
         }
@@ -516,10 +692,11 @@ impl ExportPane {
         // None there or without a GPU, and the render then opens what it
         // can.
         let compositor = studio.host.monitor.off_thread();
+        let temporary_output = output.clone();
         spawn(
             move || {
                 let job = job;
-                export::run_on(&request, compositor, job.cancel_flag(), |progress| {
+                let rendered = export::run_on(&request, compositor, job.cancel_flag(), |progress| {
                     let fraction = if progress.total > 0 {
                         progress.frame as f32 / progress.total as f32
                     } else {
@@ -534,9 +711,40 @@ impl ExportPane {
                     on_ui(move |studio, _, _| {
                         studio.handle(Msg::Export(ExportMsg::Progress { fraction, stage }));
                     });
-                })
+                });
+                match content_desk_target {
+                    Some(target) => {
+                        let result = rendered.map_err(|error| error.to_string()).and_then(|written| {
+                            let uploaded = content_desk::upload_and_queue(
+                                &target.base_url,
+                                &target.api_key,
+                                &target.production_id,
+                                target.mode,
+                                std::path::Path::new(&written),
+                                |uploaded, total| {
+                                    let cancelled = target.cancelled.load(Ordering::Acquire);
+                                    let fraction = if total > 0 { uploaded as f32 / total as f32 } else { 0.0 };
+                                    on_ui(move |studio, _, _| {
+                                        studio.handle(Msg::Export(ExportMsg::ContentDeskProgress { fraction }));
+                                    });
+                                    cancelled
+                                },
+                            ).map_err(|error| error.to_string());
+                            let _ = std::fs::remove_file(&written);
+                            uploaded
+                        });
+                        if rendered.is_err() {
+                            let _ = std::fs::remove_file(&temporary_output);
+                        }
+                        WorkerResult::ContentDesk(result)
+                    }
+                    None => WorkerResult::Export(rendered),
+                }
             },
-            |studio, _, _, result| studio.handle(Msg::Export(ExportMsg::Finished(result))),
+            |studio, _, _, result| match result {
+                WorkerResult::Export(result) => studio.handle(Msg::Export(ExportMsg::Finished(result))),
+                WorkerResult::ContentDesk(result) => studio.handle(Msg::Export(ExportMsg::ContentDeskFinished(result))),
+            },
         );
     }
 
@@ -692,6 +900,16 @@ impl ExportPane {
             message: self.message.as_str().into(),
             done_size: bytes(self.size_bytes(studio, self.quality)).into(),
             empty: clips == 0,
+            content_desk_configured: studio.prefs.content_desk_api_key.as_deref().is_some_and(|key| !key.trim().is_empty()),
+            content_desk_open: self.content_desk_open,
+            content_desk_loading: self.content_desk_loading,
+            content_desk_cards: ModelRc::new(VecModel::from(
+                self.content_desk_cards.iter().map(|card| SharedString::from(card.title.as_str())).collect::<Vec<_>>(),
+            )),
+            content_desk_card: self.content_desk_card.map_or(-1, |index| index as i32),
+            content_desk_mode: if self.content_desk_mode == QueueMode::Strategy { 1 } else { 0 },
+            content_desk_can_queue: self.content_desk_can_queue(),
+            content_desk_result: self.content_desk_result.as_str().into(),
         }
     }
 }
@@ -714,6 +932,40 @@ fn file_name(typed: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_desk_selection_and_modes_control_queue_availability() {
+        let mut pane = ExportPane::default();
+        assert!(!pane.content_desk_can_queue());
+        pane.content_desk_cards_loaded(Ok(vec![
+            crate::content_desk::ContentDeskCard { id: "one".into(), title: "First Reel".into() },
+            crate::content_desk::ContentDeskCard { id: "two".into(), title: "Second Reel".into() },
+        ]));
+        assert!(!pane.content_desk_can_queue());
+        pane.content_desk_card_changed(1);
+        assert!(pane.content_desk_can_queue());
+        pane.content_desk_mode_changed(1);
+        assert_eq!(pane.content_desk_mode, crate::content_desk::QueueMode::Strategy);
+        pane.phase = ExportPhase::Running;
+        assert!(!pane.content_desk_can_queue());
+    }
+
+    #[test]
+    fn content_desk_request_errors_and_successes_never_include_the_api_key() {
+        let mut pane = ExportPane::default();
+        let api_key = "private-key";
+        pane.content_desk_cards_loaded(Err("HTTP 401".into()));
+        assert!(pane.message.contains("401"));
+        assert!(!pane.message.contains(api_key));
+        pane.content_desk_finished(Ok(crate::content_desk::QueuedPublication {
+            card_id: "one".into(), title: "First Reel".into(), mode: "now".into(),
+            status: "queued".into(), data_postar: "2026-10-16T15:00:00Z".into(),
+        }));
+        assert!(pane.content_desk_result.contains("First Reel"));
+        assert!(pane.content_desk_result.contains("2026-10-16"));
+        assert!(pane.content_desk_result.contains(&t("export.contentDeskNow")));
+        assert!(!pane.content_desk_result.contains(api_key));
+    }
 
     /// A name is a file's or the export does not start: trimmed, never
     /// empty, never a path, and none of the characters Windows refuses.

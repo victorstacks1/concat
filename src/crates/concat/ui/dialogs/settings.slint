@@ -74,6 +74,9 @@ export struct SettingsData {
     server-token: string,
     /// "Listening on 127.0.0.1:7420 · 1 connected", "Off", or why not
     server-status: string,
+    /// Site URL and masked API key for Content Desk exports.
+    content-desk-url: string,
+    content-desk-api-key: string,
     /// "3 installed · 612 MB on disk"
     disk: string,
     version: string,
@@ -458,6 +461,8 @@ export component SettingsDialog inherits Modal {
     callback server-token-edited(text: string);
     /// A fresh random token, in place of whatever is there.
     callback server-token-generated();
+    callback content-desk-url-edited(text: string);
+    callback content-desk-api-key-edited(text: string);
     /// the Version page: look for the releases, pick one, put it in place
     callback check-updates();
     callback version-chosen(index: int);
@@ -1090,6 +1095,29 @@ export component SettingsDialog inherits Modal {
                         Button {
                             label: I18n.t("settings.newToken");
                             clicked => { root.server-token-generated(); }
+                        }
+                    }
+                }
+
+                DialogSection {
+                    title: I18n.t("settings.contentDesk");
+                    hint: I18n.t("settings.contentDeskHint");
+
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        Field {
+                            value: root.data.content-desk-url;
+                            placeholder: "https://content-desk.stacksbr.chatgpt.site";
+                            edited(text) => { root.content-desk-url-edited(text); }
+                        }
+
+                        Field {
+                            value: root.data.content-desk-api-key;
+                            placeholder: I18n.t("settings.contentDeskApiKey");
+                            technical: true;
+                            secret: true;
+                            edited(text) => { root.content-desk-api-key-edited(text); }
                         }
                     }
                 }

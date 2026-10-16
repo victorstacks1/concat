@@ -90,9 +90,21 @@ pub struct Preferences {
     /// unless the Settings sheet was asked for more or less. CONCAT_LOG in
     /// the environment overrides it for one run.
     pub log_level: Option<String>,
+    /// Content Desk site URL used by the export integration.
+    pub content_desk_url: Option<String>,
+    /// API key for the Content Desk integration. Never written to logs.
+    pub content_desk_api_key: Option<String>,
 }
 
 impl Preferences {
+    /// The Content Desk URL used when no custom Site URL was saved.
+    pub fn content_desk_url(&self) -> &str {
+        self.content_desk_url
+            .as_deref()
+            .filter(|url| !url.trim().is_empty())
+            .unwrap_or("https://content-desk.stacksbr.chatgpt.site")
+    }
+
     /// Which of `names` — the theme's accents, in its order — the remembered
     /// accent is. The first when nothing is remembered, and the first when
     /// the name is one the list no longer has: it is the default, and a
@@ -354,5 +366,21 @@ mod tests {
         let older: Preferences = serde_json::from_str(r#"{"dark": true}"#).unwrap();
         assert_eq!(older.ui_scale, None);
         assert_eq!(older.scale_index(), 0);
+    }
+
+    #[test]
+    fn content_desk_settings_default_for_old_files_and_preserve_the_api_key() {
+        let older: Preferences = serde_json::from_str(r#"{"dark": false}"#).unwrap();
+        assert_eq!(older.content_desk_url(), "https://content-desk.stacksbr.chatgpt.site");
+        assert_eq!(older.content_desk_api_key.as_deref(), None);
+
+        let prefs = Preferences {
+            content_desk_url: Some("https://desk.example".to_owned()),
+            content_desk_api_key: Some("secret-key-value".to_owned()),
+            ..Preferences::default()
+        };
+        let back: Preferences = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+        assert_eq!(back.content_desk_url.as_deref(), Some("https://desk.example"));
+        assert_eq!(back.content_desk_api_key.as_deref(), Some("secret-key-value"));
     }
 }

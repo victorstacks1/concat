@@ -54,6 +54,10 @@ pub enum SettingsMsg {
     ServerPortEdited(i32),
     ServerTokenEdited(String),
     ServerTokenGenerated,
+    /// The Content Desk Site that receives exported Reels.
+    ContentDeskUrlEdited(String),
+    /// The API credential for that Site; never included in activity logs.
+    ContentDeskApiKeyEdited(String),
     /// Make this the model the engine uses.
     ModelActivated(String),
     ModelDownload(String),
@@ -288,6 +292,16 @@ impl SettingsPane {
                 studio.prefs.download_base = (!base.is_empty()).then_some(base);
                 studio.prefs.save(&studio.host.dirs);
                 Self::apply_download_source(studio);
+            }
+            SettingsMsg::ContentDeskUrlEdited(text) => {
+                let url = text.trim().trim_end_matches('/').to_owned();
+                studio.prefs.content_desk_url = (!url.is_empty()).then_some(url);
+                studio.prefs.save(&studio.host.dirs);
+            }
+            SettingsMsg::ContentDeskApiKeyEdited(text) => {
+                let key = text.trim().to_owned();
+                studio.prefs.content_desk_api_key = (!key.is_empty()).then_some(key);
+                studio.prefs.save(&studio.host.dirs);
             }
             SettingsMsg::ServerEnabledChanged(on) => {
                 studio.prefs.server.enabled = on;
@@ -770,6 +784,8 @@ impl SettingsPane {
                 _ => studio.prefs.server.token.as_str().into(),
             },
             server_status: self.server_status(studio).into(),
+            content_desk_url: studio.prefs.content_desk_url().into(),
+            content_desk_api_key: studio.prefs.content_desk_api_key.as_deref().unwrap_or_default().into(),
             disk: {
                 let on_disk: Vec<&ModelState> = installed(&self.transcribers)
                     .into_iter()
@@ -1025,5 +1041,18 @@ mod listen_tests {
             "bare IPv6 is a host"
         );
         assert_eq!(join_listen("", 9000), "127.0.0.1:9000");
+    }
+}
+
+#[cfg(test)]
+mod content_desk_settings_tests {
+    #[test]
+    fn api_key_is_bound_to_a_masked_field_and_not_to_status_or_log_text() {
+        let source = include_str!("settings.rs");
+        let ui = include_str!("../../ui/dialogs/settings.slint").replace("\r\n", "\n");
+        assert!(source.contains("content_desk_api_key: studio.prefs.content_desk_api_key"));
+        assert!(ui.contains("value: root.data.content-desk-api-key;\n                            placeholder: I18n.t(\"settings.contentDeskApiKey\");\n                            technical: true;\n                            secret: true;"));
+        assert!(!ui.contains("text: root.data.content-desk-api-key;"));
+        assert!(source.contains("server_status: self.server_status(studio).into()"));
     }
 }

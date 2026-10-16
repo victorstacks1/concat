@@ -23,7 +23,7 @@ import { Fmt } from "../util.slint";
 // upright. The footer - the Export button, the progress, the result -
 // stays pinned under them whatever the body is doing.
 
-export enum ExportPhase { idle, running, done, failed }
+export enum ExportPhase { idle, running, done, failed, queued }
 
 export struct ExportData {
     open: bool,
@@ -92,6 +92,15 @@ export struct ExportData {
     done-size: string,
     /// nothing on the timeline to export
     empty: bool,
+    /// Content Desk chooser and its safe display state.
+    content-desk-configured: bool,
+    content-desk-open: bool,
+    content-desk-loading: bool,
+    content-desk-cards: [string],
+    content-desk-card: int,
+    content-desk-mode: int,
+    content-desk-can-queue: bool,
+    content-desk-result: string,
 }
 
 // One tile of the summary block.
@@ -547,6 +556,10 @@ component ExportFooter inherits VerticalLayout {
     callback cancel();
     callback reveal();
     callback again();
+    callback content-desk-open();
+    callback content-desk-card-changed(index: int);
+    callback content-desk-mode-changed(index: int);
+    callback content-desk-queue();
 
     property <bool> running: root.data.phase == ExportPhase.running;
 
@@ -640,6 +653,21 @@ component ExportFooter inherits VerticalLayout {
         }
     }
 
+    if root.data.phase == ExportPhase.queued: VerticalLayout {
+        spacing: 8px;
+        Text {
+            text: root.data.content-desk-result;
+            color: Theme.green;
+            font-size: Theme.fs;
+            wrap: word-wrap;
+        }
+        Button {
+            label: I18n.t("export.contentDeskDone");
+            ghost: true;
+            clicked => { root.again(); }
+        }
+    }
+
     if root.data.phase == ExportPhase.done: HorizontalLayout {
         spacing: 6px;
         alignment: start;
@@ -657,10 +685,31 @@ component ExportFooter inherits VerticalLayout {
     }
 
     if root.data.phase == ExportPhase.idle || root.data.phase == ExportPhase.failed:
-    HorizontalLayout {
-        alignment: root.narrow ? stretch : end;
-        Button {
+    VerticalLayout {
+        spacing: 8px;
+        if root.narrow: Button {
             block: true;
+            primary: true;
+            large: true;
+            glyph: Glyph.export;
+            label: root.data.empty ? I18n.t("export.nothingToExport")
+                : I18n.t("export.exportEstimate") + (root.data.quality == 0 ? root.data.size-high
+                    : root.data.quality == 1 ? root.data.size-balanced
+                    : root.data.size-small);
+            enabled: !root.data.empty && root.data.name != "";
+            clicked => { root.begin(); }
+        }
+        if root.narrow: Button {
+            block: true;
+            large: true;
+            label: I18n.t("export.contentDesk");
+            enabled: !root.data.empty && root.data.name != "";
+            clicked => { root.content-desk-open(); }
+        }
+        if !root.narrow: HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+        Button {
             primary: true;
             large: true;
             min-width: root.narrow ? 0px : 320px;
@@ -672,6 +721,70 @@ component ExportFooter inherits VerticalLayout {
             enabled: !root.data.empty && root.data.name != "";
             clicked => { root.begin(); }
         }
+        Button {
+            large: true;
+            min-width: 180px;
+            label: I18n.t("export.contentDesk");
+            enabled: !root.data.empty && root.data.name != "";
+            clicked => { root.content-desk-open(); }
+        }
+    }
+    }
+
+    if root.data.content-desk-open && root.data.phase == ExportPhase.idle:
+    DialogSection {
+        title: I18n.t("export.contentDesk");
+        hint: root.data.content-desk-configured ? I18n.t("export.contentDeskHint")
+            : I18n.t("export.contentDeskConfigure");
+
+        if root.data.content-desk-configured: VerticalLayout {
+            spacing: 8px;
+            if root.data.content-desk-loading: Text {
+                text: I18n.t("export.contentDeskLoading");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-sm;
+            }
+            if root.data.message != "": Text {
+                text: root.data.message;
+                color: Theme.danger;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+            }
+            if !root.data.content-desk-loading && root.data.content-desk-cards.length == 0 && root.data.message == "": Text {
+                text: I18n.t("export.contentDeskNoCards");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+            }
+            if root.data.content-desk-cards.length > 0: DialogRow {
+                label: I18n.t("export.contentDeskCard");
+                Select {
+                    current: root.data.content-desk-card;
+                    options: root.data.content-desk-cards;
+                    enabled: !root.running && !root.data.content-desk-loading;
+                    changed(index) => { root.content-desk-card-changed(index); }
+                }
+            }
+            if root.data.content-desk-cards.length > 0: DialogRow {
+                label: I18n.t("export.contentDeskSchedule");
+                Select {
+                    current: root.data.content-desk-mode;
+                    options: [I18n.t("export.contentDeskNow"), I18n.t("export.contentDeskStrategy")];
+                    changed(index) => { root.content-desk-mode-changed(index); }
+                }
+            }
+            if root.data.content-desk-cards.length > 0: Button {
+                block: true;
+                primary: true;
+                large: true;
+                label: root.data.content-desk-mode == 0
+                    ? I18n.t("export.contentDeskQueueNow")
+                    : I18n.t("export.contentDeskQueueStrategy");
+                enabled: root.data.content-desk-can-queue && !root.running;
+                clicked => { root.content-desk-queue(); }
+            }
+        }
+    }
     }
 }
 
@@ -718,6 +831,10 @@ export component ExportDialog inherits Rectangle {
     callback cancel();
     callback reveal();
     callback again();
+    callback content-desk-open();
+    callback content-desk-card-changed(index: int);
+    callback content-desk-mode-changed(index: int);
+    callback content-desk-queue();
 
     property <bool> running: root.data.phase == ExportPhase.running;
     /// How many columns the width holds. Three groups a column wide need
@@ -993,6 +1110,10 @@ export component ExportDialog inherits Rectangle {
                     cancel => { root.cancel(); }
                     reveal => { root.reveal(); }
                     again => { root.again(); }
+                    content-desk-open => { root.content-desk-open(); }
+                    content-desk-card-changed(index) => { root.content-desk-card-changed(index); }
+                    content-desk-mode-changed(index) => { root.content-desk-mode-changed(index); }
+                    content-desk-queue => { root.content-desk-queue(); }
                 }
             }
         }

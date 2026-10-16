@@ -32,6 +32,7 @@ mod ui {
 }
 
 mod chips;
+mod content_desk;
 mod dock;
 mod fonts;
 mod format;
@@ -1584,6 +1585,18 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_export_start(on_window!(|state| {
         state.handle(Msg::Export(ExportMsg::Start));
     }));
+    app.on_export_content_desk_open(on_window!(|state| {
+        state.handle(Msg::Export(ExportMsg::ContentDeskOpen));
+    }));
+    app.on_export_content_desk_card_changed(on_window!(|state, index: i32| {
+        state.handle(Msg::Export(ExportMsg::ContentDeskCardChanged(index)));
+    }));
+    app.on_export_content_desk_mode_changed(on_window!(|state, index: i32| {
+        state.handle(Msg::Export(ExportMsg::ContentDeskModeChanged(index)));
+    }));
+    app.on_export_content_desk_queue(on_window!(|state| {
+        state.handle(Msg::Export(ExportMsg::ContentDeskQueue));
+    }));
 
     // ── settings ──
     app.on_settings_page_changed(on_window!(|state, index: i32| {
@@ -1630,6 +1643,12 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     }));
     app.on_settings_server_token_generated(on_window!(|state| {
         state.handle(Msg::Settings(SettingsMsg::ServerTokenGenerated));
+    }));
+    app.on_settings_content_desk_url_edited(on_window!(|state, text: SharedString| {
+        state.handle(Msg::Settings(SettingsMsg::ContentDeskUrlEdited(text.to_string())));
+    }));
+    app.on_settings_content_desk_api_key_edited(on_window!(|state, text: SharedString| {
+        state.handle(Msg::Settings(SettingsMsg::ContentDeskApiKeyEdited(text.to_string())));
     }));
     app.on_settings_check_updates(on_window!(|state| {
         state.handle(Msg::Settings(SettingsMsg::CheckUpdates));
