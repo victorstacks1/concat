@@ -1,7 +1,8 @@
 name: CI
 
-# The engine's tests and lints on every push and pull request. The bundles
-# are built by release.yml, on a tag; see that file.
+# The engine's tests and lints run on pushes and pull requests. Pull requests
+# also build and smoke the packaged Windows editor; release.yml builds every
+# supported bundle on a tag.
 #
 # Every action is pinned to a commit, with the tag it was in a comment
 # beside it: a tag can be moved to other code after a run has trusted it,
@@ -32,6 +33,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  windows-app-smoke:
+    name: Windows x86_64 app smoke
+    if: github.event_name != 'workflow_call'
+    uses: ./.github/workflows/build-app.yml
+    with:
+      repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      windows_smoke_only: true
+
   engine:
     name: Engine tests and lints
     runs-on: ubuntu-latest
