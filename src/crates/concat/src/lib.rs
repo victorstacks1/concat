@@ -15,6 +15,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -145,9 +147,8 @@ pub fn run_with_project(project: Option<std::path::PathBuf>) -> Result<(), slint
     start(project, false)
 }
 
-/// Starts the way [`run`] does, as far as the window's first publish, and
-/// exits the process with status 0 there instead of entering the event
-/// loop, so nothing is shown and nobody has to close anything.
+/// Starts the way [`run`] does, renders the first frame, then exits with
+/// status 0 without leaving a window for somebody to close.
 ///
 /// For CI: a smoke run goes through everything a launch on a fresh machine
 /// does - the GPU, the engine's services, the window's component, the
@@ -157,6 +158,14 @@ pub fn run_with_project(project: Option<std::path::PathBuf>) -> Result<(), slint
 /// preferences are read, and a log file written, as on any launch.
 pub fn smoke() -> Result<(), slint::PlatformError> {
     start(None, true)
+}
+
+fn first_frame_rendered(state: &slint::RenderingState, finished: &mut bool) -> bool {
+    if *finished || !matches!(state, slint::RenderingState::AfterRendering) {
+        return false;
+    }
+    *finished = true;
+    true
 }
 
 /// [`run_with_project`], or [`smoke`] when `smoke` is set.
@@ -2008,13 +2017,22 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         shell.studio.borrow().publish(&app, &shell.models);
     }
 
-    // As far as a smoke run goes: everything the first frame needs exists
-    // and has been handed to the window. The exit is the one the event
-    // loop's end takes below, for the same reason - the engine's threads
-    // are not waited on.
+    let smoke_frame_rendered = Arc::new(AtomicBool::new(false));
     if smoke {
-        log::info!("smoke: ok");
-        leave(0);
+        let smoke_frame_rendered = Arc::clone(&smoke_frame_rendered);
+        let mut finished = false;
+        if let Err(error) = app.window().set_rendering_notifier(move |state, _| {
+            if first_frame_rendered(&state, &mut finished) {
+                smoke_frame_rendered.store(true, Ordering::Release);
+                log::info!("smoke: first frame rendered");
+                if let Err(error) = slint::quit_event_loop() {
+                    log::error!("smoke: could not stop the event loop: {error}");
+                }
+            }
+        }) {
+            log::error!("smoke: could not observe the first rendered frame: {error:?}");
+            leave(1);
+        }
     }
 
     // Decoders nobody has asked a frame of for ten seconds are closed,
@@ -2046,6 +2064,13 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         log::error!("close: the window could not run: {error}");
         leave(1);
     }
+    if smoke {
+        if !smoke_frame_rendered.load(Ordering::Acquire) {
+            log::error!("smoke: event loop exited before the first rendered frame");
+            leave(1);
+        }
+        log::info!("smoke: ok");
+    }
     leave(0);
 }
 
@@ -2075,4 +2100,31 @@ fn leave(code: i32) -> ! {
     }
     #[cfg(not(target_os = "linux"))]
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod smoke_tests {
+    use super::first_frame_rendered;
+
+    #[test]
+    fn smoke_finishes_once_after_the_first_rendered_frame() {
+        let mut finished = false;
+
+        assert!(!first_frame_rendered(
+            &slint::RenderingState::RenderingSetup,
+            &mut finished,
+        ));
+        assert!(!first_frame_rendered(
+            &slint::RenderingState::BeforeRendering,
+            &mut finished,
+        ));
+        assert!(first_frame_rendered(
+            &slint::RenderingState::AfterRendering,
+            &mut finished,
+        ));
+        assert!(!first_frame_rendered(
+            &slint::RenderingState::AfterRendering,
+            &mut finished,
+        ));
+    }
 }
