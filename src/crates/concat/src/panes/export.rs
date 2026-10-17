@@ -712,6 +712,7 @@ impl ExportPane {
                         studio.handle(Msg::Export(ExportMsg::Progress { fraction, stage }));
                     });
                 });
+                let render_failed = rendered.is_err();
                 match content_desk_target {
                     Some(target) => {
                         let result = rendered.map_err(|error| error.to_string()).and_then(|written| {
@@ -733,7 +734,7 @@ impl ExportPane {
                             let _ = std::fs::remove_file(&written);
                             uploaded
                         });
-                        if rendered.is_err() {
+                        if render_failed {
                             let _ = std::fs::remove_file(&temporary_output);
                         }
                         WorkerResult::ContentDesk(result)

@@ -236,6 +236,10 @@ export component App inherits Window {
     callback export-cancel();
     callback export-reveal();
     callback export-again();
+    callback export-content-desk-open();
+    callback export-content-desk-card-changed(index: int);
+    callback export-content-desk-mode-changed(index: int);
+    callback export-content-desk-queue();
 
     callback settings-closed();
     callback settings-page-changed(index: int);
@@ -257,6 +261,8 @@ export component App inherits Window {
     callback settings-server-port-edited(port: int);
     callback settings-server-token-edited(text: string);
     callback settings-server-token-generated();
+    callback settings-content-desk-url-edited(text: string);
+    callback settings-content-desk-api-key-edited(text: string);
     callback settings-check-updates();
     callback settings-version-chosen(index: int);
     callback settings-install-version();
@@ -729,6 +735,10 @@ export component App inherits Window {
         cancel => { root.export-cancel(); }
         reveal => { root.export-reveal(); }
         again => { root.export-again(); }
+        content-desk-open => { root.export-content-desk-open(); }
+        content-desk-card-changed(index) => { root.export-content-desk-card-changed(index); }
+        content-desk-mode-changed(index) => { root.export-content-desk-mode-changed(index); }
+        content-desk-queue => { root.export-content-desk-queue(); }
     }
 
     SettingsDialog {
@@ -766,6 +776,8 @@ export component App inherits Window {
         server-port-edited(port) => { root.settings-server-port-edited(port); }
         server-token-edited(text) => { root.settings-server-token-edited(text); }
         server-token-generated => { root.settings-server-token-generated(); }
+        content-desk-url-edited(text) => { root.settings-content-desk-url-edited(text); }
+        content-desk-api-key-edited(text) => { root.settings-content-desk-api-key-edited(text); }
         check-updates => { root.settings-check-updates(); }
         version-chosen(index) => { root.settings-version-chosen(index); }
         install-version => { root.settings-install-version(); }

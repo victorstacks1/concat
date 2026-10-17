@@ -1118,12 +1118,7 @@ impl GlyphRenderer for SkiaItemRenderer<'_> {
         // and draws every word heavier than it does today.
         let dense = self.scale_factor.get() >= 1.5;
         font.set_subpixel(dense);
-        let lcd = self.canvas.top_props().pixel_geometry() != skia_safe::PixelGeometry::Unknown;
-        font.set_edging(if lcd {
-            skia_safe::font::Edging::SubpixelAntiAlias
-        } else {
-            skia_safe::font::Edging::AntiAlias
-        });
+        font.set_edging(skia_safe::font::Edging::AntiAlias);
 
         let (glyph_ids, glyph_positions): (Vec<_>, Vec<_>) = glyphs_it
             .into_iter()
