@@ -43,6 +43,8 @@ pub enum SettingsMsg {
     /// The log level's row: an index into [`LOG_LEVELS`].
     LogLevelChanged(i32),
     PlayheadStopsChanged(bool),
+    /// The proxies switch: whether large files get a smaller copy to play.
+    ProxiesChanged(bool),
     /// The magnetic timeline switch; the tray's button is the same fact.
     MagneticChanged(bool),
     DownloadSourceChanged(i32),
@@ -274,6 +276,13 @@ impl SettingsPane {
                 // the switch goes on; seek does the clamp.
                 let at = studio.playhead;
                 studio.seek(at);
+            }
+            SettingsMsg::ProxiesChanged(on) => {
+                studio.prefs.proxies = on;
+                studio.prefs.save(&studio.host.dirs);
+                // On, the media already in the project gets its proxies
+                // straight away (refresh_art's stamp holds the switch);
+                // off, playback reads the files from the next frame.
             }
             SettingsMsg::MagneticChanged(on) => {
                 studio.prefs.magnetic = on;
@@ -610,7 +619,7 @@ impl SettingsPane {
         }
     }
 
-    /// What the Remote page says under the switch.
+    /// What the Automation page says under the switch.
     fn server_status(&self, studio: &Studio) -> String {
         match &studio.host.server {
             Some(server) => {
@@ -771,6 +780,7 @@ impl SettingsPane {
                 .position(|level| *level == log::max_level())
                 .unwrap_or(2) as i32,
             playhead_stops: self.playhead_stops,
+            proxies: studio.prefs.proxies,
             magnetic: studio.prefs.magnetic,
             download_source: self.download_source as i32,
             download_base: self.download_base.as_str().into(),
@@ -785,7 +795,12 @@ impl SettingsPane {
             },
             server_status: self.server_status(studio).into(),
             content_desk_url: studio.prefs.content_desk_url().into(),
-            content_desk_api_key: studio.prefs.content_desk_api_key.as_deref().unwrap_or_default().into(),
+            content_desk_api_key: studio
+                .prefs
+                .content_desk_api_key
+                .as_deref()
+                .unwrap_or_default()
+                .into(),
             disk: {
                 let on_disk: Vec<&ModelState> = installed(&self.transcribers)
                     .into_iter()

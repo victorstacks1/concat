@@ -16,6 +16,7 @@ TARGETS = [
         "os": "macos-15-intel",
         "target": "x86_64-apple-darwin",
         "sherpa": "osx-x64",
+        "macos-min": "13.4",
     },
     {
         "platform": "linux",

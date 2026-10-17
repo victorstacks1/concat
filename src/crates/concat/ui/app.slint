@@ -171,6 +171,10 @@ export component App inherits Window {
     /// strip, no dock - and the launch screen carries its own verbs, as it
     /// does whenever it is narrow. Set once from Rust; see platform::phone.
     in property <bool> phone;
+    /// A sheet with pages of its own is the whole window, inside its safe
+    /// area, on a phone and in any window too narrow for it to float as a
+    /// card with room around it.
+    property <bool> sheets-fill: root.phone || root.width < 600px;
 
     /// The File / Edit / View menus. Built in Rust like every other menu here,
     /// because what belongs on them depends on the project.
@@ -222,16 +226,11 @@ export component App inherits Window {
     callback export-closed();
     callback export-name-edited(name: string);
     callback export-browse();
-    callback export-resolution-changed(index: int);
     callback export-rate-changed(index: int);
-    callback export-quality-changed(index: int);
     callback export-codec-changed(index: int);
     callback export-ten-bit-changed(on: bool);
     callback export-hdr-changed(on: bool);
-    callback export-color-range-changed(index: int);
-    callback export-advanced-toggled(on: bool);
-    callback export-rate-mode-changed(index: int);
-    callback export-bitrate-changed(text: string);
+    callback export-bitrate-changed(mbps: float);
     callback export-start();
     callback export-cancel();
     callback export-reveal();
@@ -253,6 +252,7 @@ export component App inherits Window {
     callback settings-playhead-reset();
     callback settings-scale-changed(index: int);
     callback settings-playhead-stops-changed(on: bool);
+    callback settings-proxies-changed(on: bool);
     callback settings-magnetic-changed(on: bool);
     callback settings-download-source-changed(index: int);
     callback settings-download-base-edited(text: string);
@@ -534,6 +534,31 @@ export component App inherits Window {
         // before a key can walk up to this scope, which is what keeps
         // typing a title from cutting a clip.
         key-pressed(event) => {
+            // Escape closes the sheet on top, as its × does. A sheet busy
+            // with a job keeps itself - its × is gone then too - and the
+            // key is spent on it, not passed to the editor underneath.
+            if (event.text == Key.Escape) {
+                if (root.confirm.open) { root.confirm-dismissed(); return accept; }
+                if (root.relink.open) { root.relink-dismiss(); return accept; }
+                if (root.speech.open) {
+                    if (!root.speech.running) { root.speech-closed(); }
+                    return accept;
+                }
+                if (root.captions.open) {
+                    if (!root.captions.running) { root.captions-closed(); }
+                    return accept;
+                }
+                if (root.project-sheet.open) { root.project-closed(); return accept; }
+                if (root.settings.open) { root.settings-closed(); return accept; }
+                if (root.export.open) {
+                    if (root.export.phase != ExportPhase.running) { root.export-closed(); }
+                    return accept;
+                }
+                if (root.start.composing) {
+                    if (!root.start.busy) { root.start-dismiss(); }
+                    return accept;
+                }
+            }
             if (root.on-start) {
                 return reject;
             }
@@ -681,6 +706,11 @@ export component App inherits Window {
     // scrim keeps the rail from being pressed — so the order between the two
     // decides nothing and this one reads first because it comes first.
     NewProjectDialog {
+        fill: root.sheets-fill;
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
         x: 0;
         y: 0;
         width: root.width;
@@ -706,6 +736,10 @@ export component App inherits Window {
     }
 
     ExportDialog {
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
         x: 0;
         y: 0;
         width: root.width;
@@ -721,16 +755,11 @@ export component App inherits Window {
         closed => { root.export-closed(); }
         name-edited(name) => { root.export-name-edited(name); }
         browse => { root.export-browse(); }
-        resolution-changed(index) => { root.export-resolution-changed(index); }
         rate-changed(index) => { root.export-rate-changed(index); }
-        quality-changed(index) => { root.export-quality-changed(index); }
         codec-changed(index) => { root.export-codec-changed(index); }
         ten-bit-changed(on) => { root.export-ten-bit-changed(on); }
         hdr-changed(on) => { root.export-hdr-changed(on); }
-        color-range-changed(index) => { root.export-color-range-changed(index); }
-        advanced-toggled(on) => { root.export-advanced-toggled(on); }
-        rate-mode-changed(index) => { root.export-rate-mode-changed(index); }
-        bitrate-changed(text) => { root.export-bitrate-changed(text); }
+        bitrate-changed(mbps) => { root.export-bitrate-changed(mbps); }
         begin => { root.export-start(); }
         cancel => { root.export-cancel(); }
         reveal => { root.export-reveal(); }
@@ -742,6 +771,11 @@ export component App inherits Window {
     }
 
     SettingsDialog {
+        fill: root.sheets-fill;
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
         x: 0;
         y: 0;
         width: root.width;
@@ -768,6 +802,7 @@ export component App inherits Window {
         playhead-reset => { root.settings-playhead-reset(); }
         scale-changed(index) => { root.settings-scale-changed(index); }
         playhead-stops-changed(on) => { root.settings-playhead-stops-changed(on); }
+        proxies-changed(on) => { root.settings-proxies-changed(on); }
         magnetic-changed(on) => { root.settings-magnetic-changed(on); }
         download-source-changed(index) => { root.settings-download-source-changed(index); }
         download-base-edited(text) => { root.settings-download-base-edited(text); }
@@ -793,6 +828,11 @@ export component App inherits Window {
     callback relink-dismiss();
 
     ProjectDialog {
+        fill: root.sheets-fill;
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
         x: 0;
         y: 0;
         width: root.width;
@@ -811,6 +851,11 @@ export component App inherits Window {
     }
 
     RelinkDialog {
+        fill: root.sheets-fill;
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
         data: root.relink;
         relink-all => { root.relink-all(); }
         dismiss => { root.relink-dismiss(); }
@@ -823,6 +868,10 @@ export component App inherits Window {
     callback confirm-dismissed();
 
     ConfirmDialog {
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
         x: 0;
         y: 0;
         width: root.width;
@@ -834,6 +883,11 @@ export component App inherits Window {
 
 
     CaptionsDialog {
+        fill: root.sheets-fill;
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
         x: 0;
         y: 0;
         width: root.width;
@@ -853,6 +907,11 @@ export component App inherits Window {
     }
 
     SpeechDialog {
+        fill: root.sheets-fill;
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
         x: 0;
         y: 0;
         width: root.width;

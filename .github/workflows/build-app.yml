@@ -105,8 +105,9 @@ env:
   ORT_INTEL_MAC_VERSION: 1.23.2
   # WiX for the Windows .msi, as a dotnet tool, pinned by version.
   WIX_VERSION: 6.0.2
-  # Oldest macOS the bundles run on. Apple silicon Macs all run newer than
-  # this; it is the Intel floor.
+  # Oldest macOS the bundles run on, unless a target sets its own
+  # (`macos-min` below): Apple silicon's. scripts/ci/check-min-os.sh lists
+  # every bundled library built for a newer one.
   MACOSX_DEPLOYMENT_TARGET: "12.0"
   # ggml (whisper.cpp's kernels) tunes itself to the machine it is built
   # on unless told otherwise, and these bundles run on other machines: a
@@ -158,6 +159,8 @@ jobs:
     # at most 155 minutes between them on any one target, so a stuck step
     # is named by its own timeout; this is for a job stuck anywhere else.
     timeout-minutes: 190
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-min || '12.0' }}
     steps:
       # The ref release.yml names, which is its tag: without one a run
       # started by hand builds main and publishes it under the tag's name.
@@ -583,6 +586,12 @@ jobs:
             exit 1
           fi
 
+          # Every library in the bundle against the floor it declares. A
+          # warning for now: Homebrew's FFmpeg is built for the runner's
+          # macOS, so every Mac bundle has some until FFmpeg is built here
+          # for the floor.
+          scripts/ci/check-min-os.sh "$app" "$MACOSX_DEPLOYMENT_TARGET"
+
       # Signed with the repository's Developer ID when it has one, and
       # notarised so Gatekeeper opens it without a warning; ad-hoc signed
       # otherwise, which is what a fork's build gets. Either way the
@@ -809,11 +818,19 @@ jobs:
           mkdir -p "$appdir/usr/bin" "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/usr/share/applications"
           cp "$STAGE/concat" "$appdir/usr/bin/concat"
           cp -a "$STAGE/lib" "$appdir/usr/bin/lib"
-          # The X11 keyboard library the window opens by name at start, and
-          # the xcb extension under it: a machine without them panicked
-          # before showing a window, which is how the AppImage catalog's
-          # test saw it. Beside the binary, the rpath finds them.
-          for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do
+          # The X11 keyboard library the window opens by name at start, the
+          # core library under it, and the xcb extension under that: a machine
+          # without them panicked before showing a window, which is how the
+          # AppImage catalog's test saw it. Beside the binary, the rpath finds
+          # them, and an rpath on the binary covers every library the process
+          # loads, not only its own.
+          #
+          # The core library comes too because the two are one build, and a
+          # distribution pins them to each other ("libxkbcommon(x86-64) =
+          # 1.13.1-2.fc44" on Fedora 44): this runner's 1.4.0 module left to
+          # drive the host's 1.13.1 core segfaults in xkb_state_update_derived
+          # as the X11 window opens (#379).
+          for lib in libxkbcommon.so.0 libxkbcommon-x11.so.0 libxcb-xkb.so.1; do
             cp -L "$(ldconfig -p | awk -v lib="$lib" '$1 == lib { print $NF; exit }')" "$appdir/usr/bin/lib/$lib"
           done
           cp "$STAGE/concat.desktop" "$appdir/concat.desktop"

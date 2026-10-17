@@ -15,8 +15,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -766,10 +766,10 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         let description = description.to_string();
         if name.trim().is_empty() || description.trim().is_empty() {
             Shell::with(|shell, _| {
-                shell.studio.borrow_mut().notify(
-                    &i18n::t("assets.nameAndDescriptionRequired"),
-                    true,
-                );
+                shell
+                    .studio
+                    .borrow_mut()
+                    .notify(&i18n::t("assets.nameAndDescriptionRequired"), true);
             });
             return;
         }
@@ -778,8 +778,8 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             Some((
                 i18n::t("common.media"),
                 &[
-                    "mp4", "mov", "mkv", "webm", "avi", "m4v", "mp3", "wav", "aac", "m4a",
-                    "flac", "ogg", "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff",
+                    "mp4", "mov", "mkv", "webm", "avi", "m4v", "mp3", "wav", "aac", "m4a", "flac",
+                    "ogg", "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff",
                 ],
             )),
             move |studio, _, _, paths| {
@@ -814,9 +814,6 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     }));
     // Font files, the way media files come in: the system's picker, and
     // the answer later, on the window's thread.
-    editor.on_text_style_apply_all(on_window!(|state| {
-        state.apply_title_style_to_track();
-    }));
     editor.on_text_style_default(on_window!(|state| {
         state.use_title_style_for_new();
     }));
@@ -1601,14 +1598,8 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_export_name_edited(on_window!(|state, name: SharedString| {
         state.handle(Msg::Export(ExportMsg::NameEdited(name.to_string())));
     }));
-    app.on_export_resolution_changed(on_window!(|state, index: i32| {
-        state.handle(Msg::Export(ExportMsg::ResolutionChanged(index)));
-    }));
     app.on_export_rate_changed(on_window!(|state, index: i32| {
         state.handle(Msg::Export(ExportMsg::RateChanged(index)));
-    }));
-    app.on_export_quality_changed(on_window!(|state, index: i32| {
-        state.handle(Msg::Export(ExportMsg::QualityChanged(index)));
     }));
     app.on_export_codec_changed(on_window!(|state, index: i32| {
         state.handle(Msg::Export(ExportMsg::CodecChanged(index)));
@@ -1619,17 +1610,8 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_export_ten_bit_changed(on_window!(|state, on: bool| {
         state.handle(Msg::Export(ExportMsg::TenBitChanged(on)));
     }));
-    app.on_export_color_range_changed(on_window!(|state, index: i32| {
-        state.handle(Msg::Export(ExportMsg::ColorRangeChanged(index)));
-    }));
-    app.on_export_advanced_toggled(on_window!(|state, on: bool| {
-        state.handle(Msg::Export(ExportMsg::AdvancedToggled(on)));
-    }));
-    app.on_export_rate_mode_changed(on_window!(|state, index: i32| {
-        state.handle(Msg::Export(ExportMsg::RateModeChanged(index)));
-    }));
-    app.on_export_bitrate_changed(on_window!(|state, text: SharedString| {
-        state.handle(Msg::Export(ExportMsg::BitrateChanged(text.to_string())));
+    app.on_export_bitrate_changed(on_window!(|state, mbps: f32| {
+        state.handle(Msg::Export(ExportMsg::BitrateChanged(mbps)));
     }));
     app.on_export_again(on_window!(|state| {
         state.handle(Msg::Export(ExportMsg::Again));
@@ -1675,6 +1657,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_settings_playhead_stops_changed(on_window!(|state, on: bool| {
         state.handle(Msg::Settings(SettingsMsg::PlayheadStopsChanged(on)));
     }));
+    app.on_settings_proxies_changed(on_window!(|state, on: bool| {
+        state.handle(Msg::Settings(SettingsMsg::ProxiesChanged(on)));
+    }));
     app.on_settings_magnetic_changed(on_window!(|state, on: bool| {
         state.handle(Msg::Settings(SettingsMsg::MagneticChanged(on)));
     }));
@@ -1706,10 +1691,14 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         state.handle(Msg::Settings(SettingsMsg::ServerTokenGenerated));
     }));
     app.on_settings_content_desk_url_edited(on_window!(|state, text: SharedString| {
-        state.handle(Msg::Settings(SettingsMsg::ContentDeskUrlEdited(text.to_string())));
+        state.handle(Msg::Settings(SettingsMsg::ContentDeskUrlEdited(
+            text.to_string(),
+        )));
     }));
     app.on_settings_content_desk_api_key_edited(on_window!(|state, text: SharedString| {
-        state.handle(Msg::Settings(SettingsMsg::ContentDeskApiKeyEdited(text.to_string())));
+        state.handle(Msg::Settings(SettingsMsg::ContentDeskApiKeyEdited(
+            text.to_string(),
+        )));
     }));
     app.on_settings_check_updates(on_window!(|state| {
         state.handle(Msg::Settings(SettingsMsg::CheckUpdates));

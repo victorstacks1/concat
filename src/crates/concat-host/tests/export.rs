@@ -952,13 +952,13 @@ fn fades_and_wipes_reach_the_picture() {
         studio.export(&format!("transition {kind}"))
     };
 
-    // The wipes overlap the blue clip onto the red one's last second.
+    // The wipes overlap the two clips for the second centred on the cut.
     let wiped = with(&mut studio, "wipe-left");
     wiped.expect_colours(0.5, &[((0.5, 0.5), red)]);
-    wiped.expect_colours(1.5, &[((0.2, 0.5), red), ((0.8, 0.5), blue)]);
-    wiped.expect_colours(2.5, &[((0.5, 0.5), blue)]);
+    wiped.expect_colours(2.0, &[((0.2, 0.5), red), ((0.8, 0.5), blue)]);
+    wiped.expect_colours(2.9, &[((0.5, 0.5), blue)]);
     let wiped = with(&mut studio, "wipe-right");
-    wiped.expect_colours(1.5, &[((0.2, 0.5), blue), ((0.8, 0.5), red)]);
+    wiped.expect_colours(2.0, &[((0.2, 0.5), blue), ((0.8, 0.5), red)]);
 
     // The fades split the second across the cut, and do not overlap.
     for (kind, colour) in [("fade-black", [0, 0, 0]), ("fade-white", [255, 255, 255])] {
@@ -2136,6 +2136,15 @@ fn consolidation_of_silent_fractional_frames_covers_the_original_span() {
 #[test]
 fn consolidation_preserves_the_timeline_clock_of_animated_effects() {
     use concat_host::consolidate::Consolidation;
+
+    // Bloom is a wide blur rendered twice over, and on Windows' software
+    // adapter (WARP) that ran past the test's five-minute limit; there, as
+    // for the glow above, it is left out unless CONCAT_REQUIRE_GPU is set.
+    let software = export::WgpuCompositor::new().is_some_and(|gpu| gpu.on_software_adapter());
+    if software && std::env::var_os("CONCAT_REQUIRE_GPU").is_none() {
+        eprintln!("a software adapter only, and CONCAT_REQUIRE_GPU is not set; skipping");
+        return;
+    }
 
     let scratch = Scratch::new("consolidation-clock");
     let source = scratch.path().join("bright.mp4");

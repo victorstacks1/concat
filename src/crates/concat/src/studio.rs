@@ -158,10 +158,9 @@ pub const EXPORT_SHORT_SIDES: [u32; 4] = [2160, 1440, 1080, 720];
 /// compact dock: a phone, a tablet held upright, a desktop window squeezed
 /// to a corner. Four panes across less than this is four slivers.
 pub const COMPACT_WIDTH: f32 = 860.0;
-/// Megabits per second at 1080p30 for each quality tier, for the size
-/// estimate; and the CRF each tier renders at.
-pub(crate) const EXPORT_TIERS: [f32; 3] = [16.0, 8.0, 4.0];
-pub(crate) const EXPORT_CRF: [u8; 3] = [16, 20, 26];
+/// The quality an export's encoder falls back on were it given no
+/// bitrate: the export sheet always gives one.
+pub(crate) const EXPORT_CRF: u8 = 20;
 pub(crate) const AUDIO_BPS: f32 = 192_000.0;
 
 /// The frame shapes the launch screen offers, as the ratio behind each
@@ -751,7 +750,7 @@ pub struct Studio {
     /// What the last art scan was for: the document's revision, the
     /// screen, and how much was pending. The scan runs when one of them
     /// changes and is a comparison on the pointer stream between.
-    art_stamp: Option<(u64, bool, usize)>,
+    art_stamp: Option<(u64, bool, usize, bool)>,
     /// Media whose proxy has been seen to, this project: `proxy::ensure`
     /// costs two stats of the file, and once is enough.
     proxied: HashSet<String>,
@@ -1064,8 +1063,8 @@ fn shelves(
         // The shelves are built from every package and only the entries are
         // narrowed: a strip that lost a segment because a search matched
         // nothing on it would move under the pointer as you typed.
-        let name = i18n::package_text(&meta.id, "name", &meta.name);
-        let description = i18n::package_text(&meta.id, "description", &meta.description);
+        let name = meta.name.clone();
+        let description = meta.description.clone();
         let starred = favourites.iter().any(|held| held == &meta.id);
         let shown = if view.favourites {
             starred
@@ -1106,7 +1105,7 @@ fn shelves(
         entries.push(CatalogueEntryData {
             id: meta.id.as_str().into(),
             name: name.into(),
-            category: i18n::shelf_text("categories", &category).into(),
+            category: category.as_str().into(),
             group: group as i32,
             description: description.into(),
             favourite: starred,
@@ -1114,10 +1113,7 @@ fn shelves(
         });
     }
     (
-        groups
-            .into_iter()
-            .map(|group| SharedString::from(i18n::shelf_text("categories", &group)))
-            .collect(),
+        groups.into_iter().map(SharedString::from).collect(),
         entries,
     )
 }
@@ -1351,47 +1347,6 @@ fn command_name(command: &Command) -> String {
         .collect()
 }
 
-/// The selected title's look on the other titles of its lane. Words and
-/// timing stay each title's own. Position is the value shown in the inspector;
-/// old position keys are removed so they cannot override the copied placement.
-fn title_style_commands(timeline: &Timeline, source_id: &str, playhead: f32) -> Vec<Command> {
-    let Some(source) = timeline
-        .clip(source_id)
-        .filter(|clip| clip.kind == model::ClipKind::Text)
-    else {
-        return Vec::new();
-    };
-    let Some(style) = &source.text else {
-        return Vec::new();
-    };
-    let at = place_in(source, playhead);
-    let mut commands = Vec::new();
-    for clip in &timeline.clips {
-        if clip.id == source.id
-            || clip.track_id != source.track_id
-            || clip.kind != model::ClipKind::Text
-        {
-            continue;
-        }
-        let mut after = clip.as_ref().clone();
-        let content = clip.text.clone().unwrap_or_default().content;
-        after.text = Some(TextStyle {
-            content,
-            ..style.clone()
-        });
-        after.offset_x = shown(source, model::KeyProperty::OffsetX, at);
-        after.offset_y = shown(source, model::KeyProperty::OffsetY, at);
-        after.keys.retain(|key| {
-            !matches!(
-                key.property,
-                model::KeyProperty::OffsetX | model::KeyProperty::OffsetY
-            )
-        });
-        commands.extend(clip_commands(&clip.id, clip, &after));
-    }
-    commands
-}
-
 /// The commands that turn `before` into `after`, clip `id` as the echo
 /// left it against the document's: a transform, a cutout, a speed, the
 /// keys, and one patch for everything else that differs. Empty when
@@ -1559,8 +1514,8 @@ fn adjust_rows(chain: &[AppliedFilter], at: Option<f64>) -> Vec<AppliedParamData
             AppliedParamData {
                 entry: -1,
                 key: param.key.as_str().into(),
-                label: i18n::shelf_text("labels", &param.label).into(),
-                group: i18n::shelf_text("groups", &param.group).into(),
+                label: param.label.as_str().into(),
+                group: param.group.as_str().into(),
                 unit: param.unit.as_str().into(),
                 min: param.min as f32,
                 max: param.max as f32,
@@ -1617,7 +1572,7 @@ fn chain_colours(chain: &[AppliedFilter]) -> Vec<ColourKnobData> {
                 .map(move |param| ColourKnobData {
                     entry: index as i32,
                     key: param.key.as_str().into(),
-                    label: i18n::shelf_text("labels", &param.label).into(),
+                    label: param.label.as_str().into(),
                     value: unpacked(
                         entry
                             .params
@@ -1699,7 +1654,7 @@ fn chain_rows(chain: &[AppliedFilter]) -> (Vec<AppliedEntryData>, Vec<AppliedPar
             knobs.push(AppliedParamData {
                 entry: index as i32,
                 key: param.key.as_str().into(),
-                label: i18n::shelf_text("labels", &param.label).into(),
+                label: param.label.as_str().into(),
                 group: "".into(),
                 unit: param.unit.as_str().into(),
                 min: param.min as f32,
@@ -1762,8 +1717,8 @@ fn grading_rows(
                 wheels.push(WheelData {
                     entry,
                     key: param.key.as_str().into(),
-                    label: i18n::shelf_text("labels", &param.label).into(),
-                    group: i18n::shelf_text("groups", &param.group).into(),
+                    label: param.label.as_str().into(),
+                    group: param.group.as_str().into(),
                     x: value(&x, 0.0) as f32,
                     y: value(&y, 0.0) as f32,
                     master: value(&m, param.default) as f32,
@@ -1790,8 +1745,8 @@ fn grading_rows(
                     CurveData {
                         entry,
                         key: param.key.as_str().into(),
-                        label: i18n::shelf_text("labels", &param.label).into(),
-                        group: i18n::shelf_text("groups", &param.group).into(),
+                        label: param.label.as_str().into(),
+                        group: param.group.as_str().into(),
                         points: ModelRc::default(),
                         path: grading::curve_path(params, &param.key).into(),
                     },
@@ -2075,9 +2030,7 @@ fn upgraded_effects(pairs: &[(String, String)]) -> Vec<String> {
         .map(|(old, new)| {
             let new = catalogue
                 .get(new)
-                .map(|package| {
-                    i18n::package_text(package.id(), "name", &package.manifest.effect.name)
-                })
+                .map(|package| package.manifest.effect.name.clone())
                 .unwrap_or_else(|| label_of(new));
             format!("{} → {new}", label_of(old))
         })
@@ -3005,9 +2958,10 @@ impl Studio {
             return;
         };
         let project_path = session.path().to_owned();
-        // A file larger than HD gets a proxy for playback and the
-        // filmstrips, written once on the scheduler's proxy lane; see
-        // concat_host::proxy. Asked once per file per project.
+        // With proxies on in Settings, a file larger than HD gets a proxy
+        // for playback and the filmstrips, written once on the scheduler's
+        // proxy lane; see concat_host::proxy. Asked once per file per
+        // project. Off, the default, nothing is written.
         type Unproxied = (
             String,
             String,
@@ -3020,6 +2974,7 @@ impl Studio {
             .project()
             .media
             .iter()
+            .filter(|_| self.prefs.proxies)
             .filter(|item| item.kind == model::MediaKind::Video && !item.placeholder)
             .filter(|item| !self.proxied.contains(&item.id))
             .filter_map(|item| {
@@ -5006,29 +4961,6 @@ impl Studio {
         self.prefs.title_style = Some(style);
         self.prefs.save(&self.host.dirs);
         self.notify(&t("textPanel.newTitlesUseThisStyle"), false);
-    }
-
-    /// Applies one title's current look to the other titles on its unlocked
-    /// lane, as one undoable edit. Land the last inspector gesture first so
-    /// a click straight after changing a control uses the latest look.
-    pub fn apply_title_style_to_track(&mut self) {
-        self.flush_commit();
-        // The content field writes the echo before requesting a commit on
-        // blur. A button click need not move focus, so land that edit too.
-        self.commit_now();
-        let Some(id) = self.sole_selection() else {
-            return;
-        };
-        let Some(clip) = self.clip(&id) else {
-            return;
-        };
-        if self.locked(&clip.track_id) {
-            return;
-        }
-        let commands = title_style_commands(self.timeline(), &id, self.playhead);
-        if !commands.is_empty() {
-            self.apply(Command::Batch { commands });
-        }
     }
 
     /// The inspector's gesture is over: what differs between the echo and
@@ -9020,7 +8952,7 @@ impl Studio {
         let transition = clip.transition_in.as_ref().expect("held to one");
         let name = Catalogue::builtin()
             .get(&transition.id)
-            .map(|package| i18n::package_text(package.id(), "name", &package.manifest.effect.name))
+            .map(|package| package.manifest.effect.name.clone())
             .unwrap_or_else(|| label_of(&transition.id));
         crate::ui::SelectedTransitionData {
             present: true,
@@ -9074,9 +9006,7 @@ impl Studio {
                 .transition_in
                 .as_ref()
                 .and_then(|transition| Catalogue::builtin().get(&transition.id))
-                .map(|package| {
-                    i18n::package_text(package.id(), "name", &package.manifest.effect.name)
-                })
+                .map(|package| package.manifest.effect.name.clone())
                 .unwrap_or_default()
                 .into(),
             transition_duration: clip
@@ -9609,6 +9539,8 @@ impl Studio {
             self.revision,
             self.on_start,
             self.art_pending.len() + self.posters_pending.len(),
+            // Proxies switched on in Settings are seen to at once.
+            self.prefs.proxies,
         );
         if self.art_stamp == Some(stamp) {
             if !self.on_start {
@@ -10615,150 +10547,6 @@ mod tests {
         custom_rate, fps_of, grading_rows, home_folder, key_commands, packed, place_in, shown,
         wheel_partners, write_keyable,
     };
-
-    /// Applying a caption's look changes only its lane's other titles,
-    /// preserves their words and timing, and undoes as one edit.
-    #[test]
-    fn a_title_style_applies_to_its_lane_and_undoes_together() {
-        use concat_project::Editor;
-        use concat_project::model::{TextAlign, TextStyle};
-        let mut editor = Editor::new();
-        let style = TextStyle {
-            content: "First caption".into(),
-            font_family: "Hanken Grotesk".into(),
-            font_size: 0.05,
-            font_weight: 600.0,
-            italic: true,
-            color: "#ffcc00".into(),
-            align: TextAlign::Left,
-            opacity: 0.8,
-            stroke_width: 0.003,
-            stroke_color: "#112233aa".into(),
-            shadow: false,
-            background: "#000000aa".into(),
-            background_radius: 0.01,
-            background_padding_x: 0.02,
-            background_padding_y: 0.01,
-            line_height: 1.4,
-            tracking: 0.002,
-            max_width: 0.8,
-            max_height: 0.2,
-        };
-        let mut add = |track: &str, start, style| {
-            editor
-                .apply(Command::AddTextClip {
-                    track_id: Some(track.into()),
-                    above: false,
-                    start,
-                    style: Some(style),
-                    duration: Some(2.0),
-                    offset_y: Some(0.3),
-                })
-                .unwrap()
-                .created_id
-                .unwrap()
-        };
-        let source = add("T2", 0.0, style.clone());
-        let target = add(
-            "T2",
-            3.0,
-            TextStyle {
-                content: "Second caption".into(),
-                ..TextStyle::default()
-            },
-        );
-        let third = add(
-            "T2",
-            6.0,
-            TextStyle {
-                content: "Third caption".into(),
-                ..TextStyle::default()
-            },
-        );
-        let other = add(
-            "T1",
-            6.0,
-            TextStyle {
-                content: "Separate heading".into(),
-                ..TextStyle::default()
-            },
-        );
-        editor
-            .apply(Command::SetClipTransform {
-                clip_id: source.clone(),
-                scale: None,
-                offset_x: Some(0.1),
-                offset_y: Some(-0.25),
-                rotation: None,
-                stretch_x: None,
-                stretch_y: None,
-            })
-            .unwrap();
-        // Position keys on the recipient must not override the copied
-        // placement; unrelated animation stays the recipient's own.
-        for (property, value) in [
-            (super::model::KeyProperty::OffsetY, 0.4),
-            (super::model::KeyProperty::Opacity, 0.6),
-        ] {
-            editor
-                .apply(Command::SetClipKey {
-                    clip_id: target.clone(),
-                    property,
-                    at: 0.0,
-                    value,
-                    ease: super::model::KeyEase::LINEAR,
-                })
-                .unwrap();
-        }
-        for (at, value) in [(0.0, 0.1), (1.0, 0.3)] {
-            editor
-                .apply(Command::SetClipKey {
-                    clip_id: source.clone(),
-                    property: super::model::KeyProperty::OffsetX,
-                    at,
-                    value,
-                    ease: super::model::KeyEase::LINEAR,
-                })
-                .unwrap();
-        }
-        let before = editor.project().clone();
-        let commands = super::title_style_commands(before.active(), &source, 1.0);
-        assert!(!commands.is_empty());
-        editor.apply(Command::Batch { commands }).unwrap();
-        let after = editor.project().clone();
-        let caption = after.active().clip(&target).unwrap();
-        assert_eq!(
-            caption.text,
-            Some(TextStyle {
-                content: "Second caption".into(),
-                ..style.clone()
-            })
-        );
-        assert_eq!(
-            after.active().clip(&third).unwrap().text,
-            Some(TextStyle {
-                content: "Third caption".into(),
-                ..style
-            })
-        );
-        assert_eq!((caption.start, caption.duration), (3.0, 2.0));
-        assert!((caption.offset_x - 0.2).abs() < 1e-9);
-        assert_eq!(caption.offset_y, -0.25);
-        assert!(!caption.is_keyed(super::model::KeyProperty::OffsetY));
-        assert_eq!(
-            caption.value_at(super::model::KeyProperty::Opacity, 0.0),
-            0.6
-        );
-
-        assert_eq!(after.active().clip(&source), before.active().clip(&source));
-        assert_eq!(after.active().clip(&other), before.active().clip(&other));
-        assert!(super::title_style_commands(after.active(), &source, 1.0).is_empty());
-        assert!(editor.undo());
-        assert_eq!(editor.project(), &before);
-        assert!(editor.redo());
-        assert_eq!(editor.project(), &after);
-        assert!(super::title_style_commands(after.active(), "missing", 0.0).is_empty());
-    }
 
     /// A pasted group keeps its shape from `base` on, its rows shifted
     /// and held inside the lanes it lands in, a locked row passed over

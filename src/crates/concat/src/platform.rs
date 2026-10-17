@@ -68,6 +68,9 @@ struct DropHandler {
     /// answer, so it is asked once.
     wayland: Option<crate::wayland_drop::Listener>,
     wayland_tried: bool,
+    /// Whether the window has been held to its screen yet: once, at its
+    /// first event.
+    fitted: bool,
     /// Where the pointer last was, in logical pixels of the window: winit
     /// says where it moved, and a press says only that it happened.
     cursor: Option<(f32, f32)>,
@@ -133,6 +136,7 @@ impl DropHandler {
             arrived: Default::default(),
             wayland: None,
             wayland_tried: false,
+            fitted: false,
             cursor: None,
             on_pressed_away: Box::new(on_pressed_away),
             edges: cfg!(not(any(
@@ -182,6 +186,12 @@ impl CustomApplicationHandler for DropHandler {
         slint_window: Option<&slint::Window>,
         event: &WindowEvent,
     ) -> EventResult {
+        if !self.fitted
+            && let Some(window) = winit_window
+        {
+            self.fitted = true;
+            fit_to_screen(window);
+        }
         if !self.wayland_tried
             && let Some(window) = winit_window
         {
@@ -502,6 +512,38 @@ pub fn minimize(window: &slint::Window) {
     let _ = window;
 }
 
+/// Maximises a window that opened larger than its screen. The window asks
+/// for 1400 by 900 and may not shrink past 900 by 560, both in logical
+/// pixels, and a 1920 by 1080 laptop at 150 % has 1280 by 720 of them less
+/// its taskbar: the window opened past the screen's edges, with its corner
+/// handles out of reach, and could not be moved back or made smaller
+/// (#347). Maximised it fills the work area, taskbar and all, and the
+/// title strip's double-click restores it.
+/// macOS shrinks a window to its screen by itself, so there it is left be.
+#[cfg(not(target_os = "android"))]
+fn fit_to_screen(window: &WinitWindow) {
+    if cfg!(target_os = "macos") {
+        return;
+    }
+    let Some(monitor) = window.current_monitor() else {
+        return;
+    };
+    let (screen, size) = (monitor.size(), window.outer_size());
+    // A taskbar or a dock takes up to about a tenth of the height; winit
+    // knows the monitor and not its work area.
+    let room = f64::from(screen.height) * 0.9;
+    if size.width > screen.width || f64::from(size.height) > room {
+        log::info!(
+            "window: {}x{} does not fit the screen's {}x{}; maximised",
+            size.width,
+            size.height,
+            screen.width,
+            screen.height
+        );
+        window.set_maximized(true);
+    }
+}
+
 /// Whether the window is currently maximised, for the strip to pick the
 /// maximise or the restore glyph. False where there is no such state.
 pub fn is_maximized(window: &slint::Window) -> bool {
@@ -567,8 +609,8 @@ pub fn pick_folder(title: &str, start: &str) -> Option<PathBuf> {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let mut dialog = rfd::FileDialog::new().set_title(title);
-        if !start.is_empty() {
-            dialog = dialog.set_directory(start);
+        if let Some(folder) = existing_folder(start) {
+            dialog = dialog.set_directory(folder);
         }
         dialog.pick_folder()
     }
@@ -577,6 +619,19 @@ pub fn pick_folder(title: &str, start: &str) -> Option<PathBuf> {
         let _ = (title, start);
         None
     }
+}
+
+/// Where a folder dialog asked to start at `start` can open: `start`
+/// itself, or the nearest folder above it that exists. A new project's
+/// default, `<Desktop>/Concat`, is not made until the first project is, and
+/// GNOME's chooser (Nautilus, behind the portal) fails on a folder that is
+/// not there, where GTK's quietly opens elsewhere.
+/// https://github.com/jub0t/Concat/issues/331
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn existing_folder(start: &str) -> Option<&std::path::Path> {
+    std::path::Path::new(start)
+        .ancestors()
+        .find(|folder| folder.is_dir())
 }
 
 /// What a phone does when asked for files: shows the system's picker and
@@ -789,5 +844,26 @@ mod tests {
         assert_eq!(at(1.0, 1.0), Some(ResizeDirection::NorthWest));
         assert_eq!(at(999.0, 799.0), Some(ResizeDirection::SouthEast));
         assert_eq!(at(6.0, 400.0), None);
+    }
+
+    /// A folder dialog opens on a folder that exists: a default location
+    /// not made yet opens on the folder it would be made in, one that
+    /// exists opens as given, and no location asks for none.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[test]
+    fn a_folder_dialog_starts_at_a_folder_that_exists() {
+        let root = std::env::temp_dir().join(format!("concat-pick-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let missing = root.join("Concat");
+        assert_eq!(
+            existing_folder(&missing.to_string_lossy()),
+            Some(root.as_path())
+        );
+        assert_eq!(
+            existing_folder(&root.to_string_lossy()),
+            Some(root.as_path())
+        );
+        assert_eq!(existing_folder(""), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
