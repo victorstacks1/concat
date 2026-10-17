@@ -553,6 +553,7 @@ pub struct Models {
     pub stage: Rc<VecModel<StageItemData>>,
     pub guides: Rc<VecModel<StageGuideData>>,
     pub media: Rc<VecModel<MediaItemData>>,
+    pub assets: Rc<VecModel<AssetItemData>>,
     pub video_effects: Rc<VecModel<EffectData>>,
     pub audio_effects: Rc<VecModel<EffectData>>,
     /// The catalogue's shelves, one list per kind, and the shelf labels.
@@ -636,6 +637,7 @@ impl Models {
             stage: Rc::new(VecModel::default()),
             guides: Rc::new(VecModel::default()),
             media: Rc::new(VecModel::default()),
+            assets: Rc::new(VecModel::default()),
             video_effects: Rc::new(VecModel::default()),
             audio_effects: Rc::new(VecModel::default()),
             catalogue_effects: Rc::new(VecModel::default()),
@@ -730,6 +732,8 @@ pub struct Studio {
 
     // ── the bin ──
     pub media: crate::panes::media_bin::MediaBin,
+    /// App-wide reusable files, independent of which project is open.
+    pub assets: Vec<concat_host::assets::Asset>,
     /// Decoded art by media id, and the ids a worker is decoding for.
     pub peaks: HashMap<String, Arc<Pyramid>>,
     /// Filmstrips by media id: the picture, how many frames are in it, one
@@ -2117,6 +2121,10 @@ impl Studio {
         let languages = i18n::languages(&host.dirs);
         let recents = projects::list(&host.dirs.config);
         let text_presets = presets::all(&host.dirs);
+        let assets = concat_host::assets::list(&host.dirs).unwrap_or_else(|error| {
+            log::warn!("{error}");
+            Vec::new()
+        });
         let mut studio = Self {
             prefs,
             library: Default::default(),
@@ -2126,6 +2134,7 @@ impl Studio {
             dirty: false,
             autosave: slint::Timer::default(),
             media: crate::panes::media_bin::MediaBin::default(),
+            assets,
             peaks: HashMap::new(),
             strips: HashMap::new(),
             windows: HashMap::new(),
@@ -9456,6 +9465,19 @@ impl Studio {
         // counted on its own shelf under Generated. See MediaBin::shows.
         let items = &self.project().media;
         sync(&models.media, self.media.rows(self));
+        sync(
+            &models.assets,
+            self.assets
+                .iter()
+                .enumerate()
+                .map(|(index, asset)| AssetItemData {
+                    id: index as i32 + 1,
+                    name: asset.name.as_str().into(),
+                    description: asset.description.as_str().into(),
+                    source_name: asset.source_name.as_str().into(),
+                })
+                .collect(),
+        );
         let imported = |kind: Option<model::MediaKind>| {
             items
                 .iter()

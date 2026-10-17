@@ -311,6 +311,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         editor.set_stage_items(ModelRc::from(models.stage.clone()));
         editor.set_stage_guides(ModelRc::from(models.guides.clone()));
         editor.set_media(ModelRc::from(models.media.clone()));
+        editor.set_library_assets(ModelRc::from(models.assets.clone()));
         editor.set_video_effects(ModelRc::from(models.video_effects.clone()));
         editor.set_audio_effects(ModelRc::from(models.audio_effects.clone()));
         editor.set_catalogue_effects(ModelRc::from(models.catalogue_effects.clone()));
@@ -760,6 +761,57 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             );
         });
     });
+    editor.on_library_import_asset(|name, description| {
+        let name = name.to_string();
+        let description = description.to_string();
+        if name.trim().is_empty() || description.trim().is_empty() {
+            Shell::with(|shell, _| {
+                shell.studio.borrow_mut().notify(
+                    &i18n::t("assets.nameAndDescriptionRequired"),
+                    true,
+                );
+            });
+            return;
+        }
+        host::pick_files_then(
+            i18n::t("assets.chooseFile"),
+            Some((
+                i18n::t("common.media"),
+                &[
+                    "mp4", "mov", "mkv", "webm", "avi", "m4v", "mp3", "wav", "aac", "m4a",
+                    "flac", "ogg", "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff",
+                ],
+            )),
+            move |studio, _, _, paths| {
+                if paths.len() != 1 {
+                    studio.notify(&i18n::t("assets.chooseOneFile"), true);
+                    return;
+                }
+                let dirs = studio.host.dirs.clone();
+                let path = paths.into_iter().next().expect("one selected file");
+                host::spawn(
+                    move || concat_host::assets::add(&dirs, &path, &name, &description),
+                    |studio, _, _, result| match result {
+                        Ok(asset) => {
+                            studio.assets.push(asset);
+                            studio.notify(&i18n::t("assets.saved"), false);
+                        }
+                        Err(error) => studio.notify(&error, true),
+                    },
+                );
+            },
+        );
+    });
+    editor.on_library_use_asset(on_window!(|state, row: i32| {
+        let Some(asset) = state.assets.get(row.saturating_sub(1) as usize) else {
+            return;
+        };
+        let Some(path) = concat_host::assets::path(&state.host.dirs, asset) else {
+            state.notify(&i18n::t("assets.invalidFile"), true);
+            return;
+        };
+        state.handle(Msg::Media(MediaMsg::Import(vec![path])));
+    }));
     // Font files, the way media files come in: the system's picker, and
     // the answer later, on the window's thread.
     editor.on_text_style_apply_all(on_window!(|state| {

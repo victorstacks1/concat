@@ -95,6 +95,7 @@ export component Seat inherits Rectangle {
             pane-removed => { root.removed(); }
 
             items: Editor.media;
+            assets: Editor.library-assets;
             count-all: Editor.media-count-all;
             count-video: Editor.media-count-video;
             count-audio: Editor.media-count-audio;
@@ -107,6 +108,8 @@ export component Seat inherits Rectangle {
             jump-token: Editor.media-jump-token;
 
             import-media => { Editor.import-media(); }
+            import-asset(name, description) => { Editor.library-import-asset(name, description); }
+            use-asset(id) => { Editor.library-use-asset(id); }
             filter-changed(filter) => { Editor.media-filter-changed(filter); }
             sort-changed(index) => { Editor.media-sort-changed(index); }
             floor-pressed => { Editor.blur(); }

@@ -12,6 +12,7 @@ import { SearchField } from "../inspector/controls.slint";
 import { Select } from "../primitives/select.slint";
 import { Wave } from "../primitives/wave.slint";
 import { ContextMenu, MenuItemData } from "../primitives/context-menu.slint";
+import { Field } from "../primitives/modal.slint";
 
 // The library pane: a strip of pages across the top, then a narrow category
 // sidebar and the browsing area beside it. Media is the bin; Text adds a
@@ -87,6 +88,14 @@ export struct MediaItemData {
     /// a file should look like itself wherever it is drawn.
     wave: string,
     selected: bool,
+}
+
+/// A machine-wide asset, independent of the project currently open.
+export struct AssetItemData {
+    id: int,
+    name: string,
+    description: string,
+    source-name: string,
 }
 
 // ── the page strip ───────────────────────────────────────────────────────────
@@ -1681,6 +1690,7 @@ export component MediaPane inherits Rectangle {
     /// how many of the whole bin are selected, not how many of `items` are
     in property <int> selected-count;
     in property <bool> importing;
+    in property <[AssetItemData]> assets;
 
     /// What the bin is narrowed to. Rust's: a row of the sidebar reports
     /// its pick and the answer comes back here, so the editor can narrow
@@ -1691,6 +1701,8 @@ export component MediaPane inherits Rectangle {
     changed jump-token => { root.tab = 0; }
 
     callback import-media();
+    callback import-asset(name: string, description: string);
+    callback use-asset(id: int);
     callback filter-changed(filter: MediaFilter);
     /// The sort dropdown beside the import button picked a new order.
     callback sort-changed(index: int);
@@ -1760,6 +1772,8 @@ export component MediaPane inherits Rectangle {
     callback pane-removed();
 
     property <int> tab;
+    property <string> asset-name-draft;
+    property <string> asset-description-draft;
     /// How far left the page strip can be pushed: nothing, while its chips
     /// fit. See `strip`.
     property <length> strip-floor: Math.min(0px, strip.width - strip.content-width);
@@ -1916,6 +1930,12 @@ export component MediaPane inherits Rectangle {
                             label: I18n.t("mediaPane.templates");
                             current: root.tab == 6;
                             clicked => { root.tab = 6; }
+                        }
+                        LibraryTab {
+                            glyph: Glyph.music;
+                            label: I18n.t("mediaPane.assets");
+                            current: root.tab == 7;
+                            clicked => { root.tab = 7; }
                         }
                         }
                     }
@@ -2226,6 +2246,20 @@ export component MediaPane inherits Rectangle {
                             current: true;
                         }
                     }
+
+                    if root.tab == 7: VerticalLayout {
+                        spacing: 1px;
+                        CategoryHeading {
+                            height: 26px;
+                            title: I18n.t("mediaPane.assets");
+                            open: true;
+                        }
+                        CategoryRow {
+                            height: 24px;
+                            label: I18n.t("assets.reusableFiles");
+                            current: true;
+                        }
+                    }
                 }
             }
 
@@ -2499,6 +2533,87 @@ export component MediaPane inherits Rectangle {
                 if root.tab == 6: Empty {
                     glyph: Glyph.slot;
                     text: I18n.t("mediaPane.noTemplatesYetMark");
+                }
+
+                if root.tab == 7: VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    Text {
+                        text: I18n.t("assets.instruction");
+                        color: Theme.fg-dim;
+                        font-size: Theme.fs-sm;
+                        wrap: word-wrap;
+                    }
+
+                    Field {
+                        value: root.asset-name-draft;
+                        placeholder: I18n.t("assets.name");
+                        edited(text) => { root.asset-name-draft = text; }
+                    }
+
+                    Field {
+                        value: root.asset-description-draft;
+                        placeholder: I18n.t("assets.description");
+                        edited(text) => { root.asset-description-draft = text; }
+                    }
+
+                    ImportButton {
+                        label: I18n.t("assets.add");
+                        glyph: Glyph.import;
+                        clicked => {
+                            root.import-asset(root.asset-name-draft, root.asset-description-draft);
+                        }
+                    }
+
+                    if root.assets.length == 0: Empty {
+                        glyph: Glyph.music;
+                        text: I18n.t("assets.empty");
+                    }
+
+                    for asset in root.assets: Rectangle {
+                        min-height: 72px;
+                        background: Theme.well;
+                        border-radius: Theme.r;
+
+                        HorizontalLayout {
+                            padding: 10px;
+                            spacing: 12px;
+
+                            VerticalLayout {
+                                vertical-stretch: 1;
+                                alignment: center;
+                                spacing: 4px;
+                                Text {
+                                    text: asset.name;
+                                    color: Theme.fg;
+                                    font-size: Theme.fs;
+                                    font-weight: 700;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: asset.description;
+                                    color: Theme.fg-muted;
+                                    font-size: Theme.fs-sm;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: asset.source-name;
+                                    color: Theme.fg-dim;
+                                    font-family: Theme.font-technical;
+                                    font-size: Theme.fs-xs;
+                                    overflow: elide;
+                                }
+                            }
+
+                            ImportButton {
+                                horizontal-stretch: 0;
+                                label: I18n.t("assets.addToProject");
+                                glyph: Glyph.plus;
+                                clicked => { root.use-asset(asset.id); }
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -24,6 +24,7 @@ pub mod consolidate;
 pub mod crash;
 pub mod cutout;
 pub mod dirs;
+pub mod assets;
 pub mod enhance;
 pub mod export;
 pub mod jobs;
