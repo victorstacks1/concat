@@ -41,16 +41,6 @@ impl Dock {
         Box::new(Dock::Leaf(kind))
     }
 
-    /// Replaces the workspace with its monitor and restores the last layout
-    /// on the next toggle.
-    pub fn toggle_preview_fullscreen(&mut self, restore: &mut Option<Dock>) {
-        if let Some(previous) = restore.take() {
-            *self = previous;
-        } else {
-            *restore = Some(std::mem::replace(self, Dock::Leaf(PaneKind::Preview)));
-        }
-    }
-
     /// The node a path names, following each step into the first branch or the
     /// second. A path that runs past a leaf stops there, which cannot happen
     /// for a path this module produced.
@@ -339,23 +329,4 @@ pub fn nearest_row(heights: &[f32], y: f32) -> i32 {
         top += height;
     }
     best
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Dock, default_dock};
-    use crate::ui::PaneKind;
-
-    #[test]
-    fn preview_fullscreen_toggle_restores_the_previous_layout() {
-        let mut dock = default_dock();
-        let mut restore = None;
-
-        dock.toggle_preview_fullscreen(&mut restore);
-        assert!(matches!(&dock, Dock::Leaf(PaneKind::Preview)));
-
-        dock.toggle_preview_fullscreen(&mut restore);
-        assert!(matches!(&dock, Dock::Split { .. }));
-        assert_eq!(dock.kind_at(1), Some(PaneKind::Preview));
-    }
 }
