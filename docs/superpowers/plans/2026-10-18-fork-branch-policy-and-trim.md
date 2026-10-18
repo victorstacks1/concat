@@ -57,6 +57,6 @@
 
 ### Task 3: Create the reviewable integration
 
-- [ ] Commit the feature changes on `feature/remove-fork-update-preview-controls`.
-- [ ] Push the feature branch and open a pull request targeting `custom`.
-- [ ] Leave the PR unmerged for review; do not publish a release.
+- [x] Commit the feature changes on `feature/remove-fork-update-preview-controls`.
+- [x] Push the feature branch and open a pull request targeting `custom`.
+- [x] Leave the PR unmerged for review; do not publish a release.
