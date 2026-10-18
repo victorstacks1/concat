@@ -599,6 +599,12 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         // whichever is showing.
         state.set_compact(width < studio::COMPACT_WIDTH);
     }));
+    editor.on_preview_fullscreen_toggle(on_dock!(|state| {
+        state.toggle_preview_fullscreen();
+    }));
+    editor.on_preview_rate_step(on_window!(|state, direction: i32| {
+        state.step_preview_rate(direction);
+    }));
     editor.on_dock_set(on_dock!(|state, seat: i32, kind: PaneKind| {
         let Some(path) = state.dock.leaf_path(seat.max(0) as usize) else {
             return;

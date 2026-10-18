@@ -85,6 +85,8 @@ export enum Glyph {
     align-bottom,
     distribute,
     fit,
+    /// Four corners pointing inward: leave the expanded monitor view.
+    restore-view,
     rows,
     film,
     music,
@@ -527,6 +529,12 @@ export component Icon inherits Rectangle {
         size: root.size; tint: root.tint; weight: root.weight;
         commands: "M8 3H5a2 2 0 0 0-2 2v3 M21 8V5a2 2 0 0 0-2-2h-3 M3 16v3a2 2 0 0 0"
             + " 2 2h3 M16 21h3a2 2 0 0 0 2-2v-3";
+    }
+
+    if root.glyph == Glyph.restore-view: Stroked {
+        size: root.size; tint: root.tint; weight: root.weight;
+        commands: "M8 3H5a2 2 0 0 0-2 2v3 M16 3h3a2 2 0 0 1 2 2v3 M3 16v3a2 2 0 0 0"
+            + " 2 2h3 M21 16v3a2 2 0 0 1-2 2h-3";
     }
 
     // lucide/hand

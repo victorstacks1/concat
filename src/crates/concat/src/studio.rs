@@ -767,6 +767,9 @@ pub struct Studio {
     pub playhead: f32,
     pub playing: bool,
     transport: slint::Timer,
+    /// Playback rate for the monitor only; clip speeds remain project data.
+    pub preview_rate: f32,
+    transport_anchor: (std::time::Instant, f32),
     /// The preview axis: the instant under the pointer while it crosses the
     /// lanes, which the monitor shows instead of the playhead's. None when
     /// the pointer is elsewhere, or the axis is off, or the cut is playing.
@@ -811,6 +814,7 @@ pub struct Studio {
 
     // ── the workspace ──
     pub dock: Dock,
+    preview_fullscreen_restore: Option<Dock>,
     /// The dock not showing: the compact one while the window is wide,
     /// the wide one while it is compact. Swapped with `dock` as the
     /// window crosses `COMPACT_WIDTH`, so each keeps its shape.
@@ -2103,6 +2107,8 @@ impl Studio {
             // ~20px a second: a ten-second cut fits a pane at its default width.
             playing: false,
             transport: slint::Timer::default(),
+            preview_rate: 1.0,
+            transport_anchor: (std::time::Instant::now(), 0.0),
             hover: None,
             hover_hush: slint::Timer::default(),
             clipboard: Vec::new(),
@@ -2126,6 +2132,7 @@ impl Studio {
             posters_pending: HashSet::new(),
             project_name: "Untitled project".into(),
             dock: default_dock(),
+            preview_fullscreen_restore: None,
             dock_aside: crate::dock::compact_dock(),
             compact: false,
             workspace: (0.0, 0.0),
@@ -2799,14 +2806,14 @@ impl Studio {
         // pointer that happens to be over the lanes must not stay on it.
         self.end_hover();
         self.playing = true;
+        self.transport_anchor = (std::time::Instant::now(), self.playhead);
         log::debug!("playback: playing from {:.3}s", self.playhead);
         self.host.playback.play(f64::from(self.playhead));
         self.meters.wake();
-        // The clock is the audio device's. This looks at it far more often
-        // than any timeline's frame rate and acts only when the frame under
-        // it changes, so each frame is asked for within a few milliseconds of
-        // its time instead of whenever a fixed 30 Hz beat next comes round -
-        // which at 24, 25 or 60 fps is unevenly late, and reads as judder.
+        // The monitor has its own clock so changing its preview rate does not
+        // change a clip's speed. Poll often, and ask only when the frame under
+        // the playhead changes, to avoid a fixed 30 Hz beat arriving late at
+        // 24, 25 or 60 fps.
         let mut shown: Option<i64> = None;
         self.transport.start(
             slint::TimerMode::Repeated,
@@ -2816,7 +2823,7 @@ impl Studio {
                     {
                         let mut studio = shell.studio.borrow_mut();
                         let end = studio.duration();
-                        let position = studio.host.playback.position_now() as f32;
+                        let position = studio.preview_position_now();
                         let fps = studio.project().active().video.rate();
                         let frame = (f64::from(position) * fps + 1e-6).floor() as i64;
                         if position < end && shown == Some(frame) {
@@ -2857,6 +2864,9 @@ impl Studio {
 
     pub fn pause(&mut self) {
         if self.playing {
+            self.playhead = self.preview_position_now();
+        }
+        if self.playing {
             log::debug!("playback: paused at {:.3}s", self.playhead);
         }
         let was_playing = self.playing;
@@ -2867,6 +2877,25 @@ impl Studio {
         if was_playing {
             self.host.monitor.shrink();
         }
+    }
+
+    fn preview_position_now(&self) -> f32 {
+        let (started, at) = self.transport_anchor;
+        (at + started.elapsed().as_secs_f32() * self.preview_rate).min(self.duration())
+    }
+
+    pub fn step_preview_rate(&mut self, direction: i32) {
+        let rate = step_preview_rate(self.preview_rate, direction);
+        if self.playing {
+            self.playhead = self.preview_position_now();
+            self.transport_anchor = (std::time::Instant::now(), self.playhead);
+        }
+        self.preview_rate = rate;
+    }
+
+    pub fn toggle_preview_fullscreen(&mut self) {
+        self.dock
+            .toggle_preview_fullscreen(&mut self.preview_fullscreen_restore);
     }
 
     /// Moves the playhead, the transport with it, and asks for the frame.
@@ -7656,10 +7685,13 @@ impl Studio {
         self.publish_dock(app, models);
     }
 
-    pub fn publish_dock(&self, _app: &App, models: &Models) {
+    pub fn publish_dock(&self, app: &App, models: &Models) {
         let out = self.dock_layout();
         sync(&models.seats, out.seats);
         sync(&models.dividers, out.dividers);
+        let editor = app.global::<Editor>();
+        editor.set_preview_rate(self.preview_rate);
+        editor.set_preview_fullscreen(self.preview_fullscreen_restore.is_some());
     }
 
     /// The window is a phone's: the lanes keep the playhead at their middle
@@ -7674,7 +7706,12 @@ impl Studio {
     /// away whole; see `COMPACT_WIDTH`.
     pub fn set_compact(&mut self, compact: bool) {
         if compact != self.compact {
-            std::mem::swap(&mut self.dock, &mut self.dock_aside);
+            if let Some(mut restore) = self.preview_fullscreen_restore.take() {
+                std::mem::swap(&mut restore, &mut self.dock_aside);
+                self.preview_fullscreen_restore = Some(restore);
+            } else {
+                std::mem::swap(&mut self.dock, &mut self.dock_aside);
+            }
             self.compact = compact;
         }
     }
@@ -10540,13 +10577,25 @@ pub(crate) fn audio_specs(clips: &[concat_export::ExportClip]) -> Vec<ClipSpec> 
         .collect()
 }
 
+fn step_preview_rate(rate: f32, direction: i32) -> f32 {
+    ((rate * 10.0).round() + direction.signum() as f32).clamp(5.0, 30.0) / 10.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         Command, Footprint, Studio, adjust_key_names, chain_colours, chain_rows, custom_frame,
         custom_rate, fps_of, grading_rows, home_folder, key_commands, packed, place_in, shown,
-        wheel_partners, write_keyable,
+        step_preview_rate, wheel_partners, write_keyable,
     };
+
+    #[test]
+    fn preview_rate_steps_by_point_one_and_stays_between_half_and_three() {
+        assert_eq!(step_preview_rate(1.0, 1), 1.1);
+        assert_eq!(step_preview_rate(1.0, -1), 0.9);
+        assert_eq!(step_preview_rate(0.5, -1), 0.5);
+        assert_eq!(step_preview_rate(3.0, 1), 3.0);
+    }
 
     /// A pasted group keeps its shape from `base` on, its rows shifted
     /// and held inside the lanes it lands in, a locked row passed over

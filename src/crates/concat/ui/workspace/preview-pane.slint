@@ -620,6 +620,8 @@ export component PreviewPane inherits Rectangle {
     in property <float> frame-rate: 30;
     in property <int> ratio-index;
     in property <int> quality-index;
+    in property <float> playback-rate: 1.0;
+    in property <bool> fullscreen;
 
     // ── where the playhead is ────────────────────────────────────────────
     in property <float> playhead;
@@ -657,6 +659,8 @@ export component PreviewPane inherits Rectangle {
     callback step(frames: float);
     callback ratio-changed(index: int);
     callback quality-changed(index: int);
+    callback playback-rate-step(direction: int);
+    callback fullscreen-toggle();
 
     // The stage's own gestures; see the Editor global for what each means.
     callback stage-pressed(x: float, y: float, additive: bool);
@@ -727,7 +731,7 @@ export component PreviewPane inherits Rectangle {
                 }
             }
 
-            VerticalLayout {
+            if !root.fullscreen: VerticalLayout {
                 alignment: center;
                 PaneSwitcher {
                     kind: PaneKind.preview;
@@ -1125,6 +1129,26 @@ export component PreviewPane inherits Rectangle {
                     spacing: 6px;
                     alignment: end;
 
+                    IconButton {
+                        glyph: Glyph.minus;
+                        label: I18n.t("common.speed") + " − 0.1×";
+                        enabled: root.playback-rate > 0.5;
+                        clicked => { root.playback-rate-step(-1); }
+                    }
+                    Text {
+                        text: "\{Math.round(root.playback-rate * 10) / 10}×";
+                        color: Theme.fg;
+                        font-family: Theme.font-technical;
+                        font-size: Theme.fs;
+                        vertical-alignment: center;
+                    }
+                    IconButton {
+                        glyph: Glyph.plus;
+                        label: I18n.t("common.speed") + " + 0.1×";
+                        enabled: root.playback-rate < 3.0;
+                        clicked => { root.playback-rate-step(1); }
+                    }
+
                     VerticalLayout {
                         alignment: center;
                         RatioPicker {
@@ -1157,10 +1181,9 @@ export component PreviewPane inherits Rectangle {
                     VerticalLayout {
                         alignment: center;
                         IconButton {
-                            glyph: Glyph.fit;
-                            label: I18n.t("previewPane.fitFramePane");
-                            enabled: !viewport.fitted;
-                            clicked => { viewport.fit(); }
+                            glyph: root.fullscreen ? Glyph.restore-view : Glyph.fit;
+                            label: I18n.t("common.full") + " " + I18n.t("common.preview");
+                            clicked => { root.fullscreen-toggle(); }
                         }
                     }
                 }

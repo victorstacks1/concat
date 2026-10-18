@@ -169,6 +169,8 @@ export component Seat inherits Rectangle {
             frame-rate: Editor.frame-rate;
             ratio-index: Editor.ratio-index;
             quality-index: Editor.quality-index;
+            playback-rate: Editor.preview-rate;
+            fullscreen: Editor.preview-fullscreen;
             // A library file on the monitor has its transport: the readout,
             // the play button and the timecode run through the source.
             playhead: SourcePreview.open ? SourcePreview.time : Editor.playhead;
@@ -204,6 +206,8 @@ export component Seat inherits Rectangle {
             source-closed => { SourcePreview.closed(); }
             ratio-changed(index) => { Editor.ratio-changed(index); }
             quality-changed(index) => { Editor.quality-changed(index); }
+            playback-rate-step(direction) => { Editor.preview-rate-step(direction); }
+            fullscreen-toggle => { Editor.preview-fullscreen-toggle(); }
             stage-pressed(x, y, additive) => {
                 Editor.blur();
                 Editor.stage-pressed(x, y, additive);
